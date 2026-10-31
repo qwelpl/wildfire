@@ -5,6 +5,8 @@
   const DAY = 86400000;
   const ROWS = ['QWERTYUIOP', 'ASDFGHJKL', '+ZXCVBNM-'];
   const MAX_LEN = 12;
+  // While testing, start every puzzle fresh on each page load.
+  const KEEP_PROGRESS = false;
 
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -38,7 +40,7 @@
   function load(i) {
     index = i;
     puzzle = DATA.puzzles[i % DATA.puzzles.length];
-    const saved = store.get(`burn:${i}`, null);
+    const saved = KEEP_PROGRESS ? store.get(`burn:${i}`, null) : null;
     state = saved && Array.isArray(saved.locked) && saved.locked.length === puzzle.clues.length
       ? saved
       : { locked: puzzle.clues.map(() => null), undos: 0, solved: false, revealed: false };

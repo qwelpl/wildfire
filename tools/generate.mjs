@@ -1,5 +1,5 @@
-// Builds js/puzzles.js: daily sets of 4 clues with exactly one valid way to
-// answer them all without reusing a letter across words.
+// Builds js/puzzles.js: daily sets of 4 clues that can be answered without
+// reusing a letter across words, with several routes so it stays forgiving.
 // Usage: node tools/generate.mjs [count]
 import { readFileSync, writeFileSync } from 'node:fs';
 import { GROUPS, CLASHES } from './groups.mjs';
@@ -89,18 +89,17 @@ while (puzzles.length < COUNT) {
       if (!set.includes(n)) set.push(n);
     }
     if (!compatible(set)) continue;
-    const sols = solutions(set);
-    if (sols.length !== 1) continue;
-    const sol = sols[0];
+    const sols = solutions(set, 200);
+    if (!sols.length) continue;
+    // Show the most familiar route as the answer.
+    const rarityOf = (s) => set.reduce((sum, n, i) => sum + GROUPS[n].indexOf(s[i]), 0);
+    const sol = sols.reduce((a, b) => (rarityOf(b) < rarityOf(a) ? b : a));
     const key = [...sol].sort().join(',');
     if (usedSolutions.has(key)) continue;
-    // How many clues have their most obvious answer as a trap.
+    // Prefer puzzles where the obvious answers mostly fit, with several
+    // routes and familiar words.
     const traps = set.filter((n, i) => GROUPS[n][0] !== sol[i]).length;
-    if (traps < 2 || traps > 3) continue;
-    // Prefer solutions made of familiar words, so the trick is the
-    // ordering, not obscure vocabulary.
-    const rarity = set.reduce((sum, n, i) => sum + GROUPS[n].indexOf(sol[i]), 0);
-    const score = -rarity;
+    const score = Math.min(sols.length, 20) - 3 * rarityOf(sol) - 6 * traps;
     if (!best || score > best.score) best = { set, sol, score, key };
   }
   if (!best) throw new Error(`stuck at puzzle ${puzzles.length + 1}`);

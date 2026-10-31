@@ -154,6 +154,8 @@ main {
 .meta-line {
   display: flex;
   justify-content: space-between;
+  gap: 12px;
+  white-space: nowrap;
   font-size: 13px;
   color: var(--muted);
   padding-bottom: 12px;
@@ -276,6 +278,12 @@ main {
 }
 
 #msg.warn { color: var(--ember); }
+
+.status-actions {
+  display: flex;
+  gap: 16px;
+  flex-shrink: 0;
+}
 
 /* Keyboard */
 

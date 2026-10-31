@@ -12,7 +12,7 @@
   const els = {
     clues: $('clues'), msg: $('msg'), keyboard: $('keyboard'), number: $('number'),
     date: $('date'), tally: $('tally'), prev: $('prev'), next: $('next'),
-    reveal: $('reveal'), help: $('help'), done: $('done'),
+    reveal: $('reveal'), hint: $('hint'), help: $('help'), done: $('done'),
   };
 
   // Storage can be unavailable (private mode, blocked site data).
@@ -44,7 +44,8 @@
     const saved = KEEP_PROGRESS ? store.get(`burn:${i}`, null) : null;
     state = saved && Array.isArray(saved.locked) && saved.locked.length === puzzle.clues.length
       ? saved
-      : { locked: puzzle.clues.map(() => null), undos: 0, solved: false, revealed: false };
+      : { locked: puzzle.clues.map(() => null), undos: 0, hints: 0, solved: false, revealed: false };
+    state.hints ??= 0;
     state.active = firstOpen() ?? 0;
     typing = '';
     say('');
@@ -55,7 +56,7 @@
 
   function save() {
     store.set(`burn:${index}`, {
-      locked: state.locked, undos: state.undos, solved: state.solved, revealed: state.revealed,
+      locked: state.locked, undos: state.undos, hints: state.hints, solved: state.solved, revealed: state.revealed,
     });
   }
 
@@ -88,9 +89,14 @@
     els.next.disabled = index >= todayIndex;
 
     const left = 26 - burnedLetters().size;
-    const undos = state.undos === 1 ? '1 undo' : `${state.undos} undos`;
-    els.tally.textContent = `${left} letters left · ${undos}`;
+    const plural = (n, w) => (n === 1 ? `1 ${w}` : `${n} ${w}s`);
+    els.tally.textContent = [
+      `${left} left`,
+      state.undos && plural(state.undos, 'undo'),
+      state.hints && plural(state.hints, 'hint'),
+    ].filter(Boolean).join(' · ');
     els.reveal.hidden = finished();
+    els.hint.hidden = finished();
 
     els.clues.replaceChildren(...puzzle.clues.map((c, i) => {
       const li = document.createElement('li');
@@ -190,6 +196,7 @@
     clearTimeout(msgTimer);
     els.msg.textContent = text;
     els.msg.className = warn ? 'warn' : '';
+    delete els.msg.dataset.hint;
     if (text && !sticky) msgTimer = setTimeout(() => { els.msg.textContent = ''; checkDeadEnd(); }, 2600);
   }
 
@@ -212,7 +219,8 @@
       return;
     }
     if (typing.length >= MAX_LEN) return;
-    if (!els.msg.classList.contains('warn') || !els.msg.textContent.startsWith('Nothing')) say('');
+    const keep = els.msg.dataset.hint || (els.msg.classList.contains('warn') && els.msg.textContent.startsWith('Nothing'));
+    if (!keep) say('');
     typing += letter;
     render();
     renderKeys();
@@ -279,6 +287,7 @@
     if (finished() || state.locked[i] || i === state.active) return;
     state.active = i;
     typing = '';
+    if (els.msg.dataset.hint) say('');
     render();
     renderKeys();
   }
@@ -298,6 +307,37 @@
       !state.locked[i] && !c.answers.some((w) => ![...w].some((ch) => burned.has(ch))));
     if (stuck) say(`Nothing for “${stuck.clue}” survives. Undo a word.`, true, true);
     else if (els.msg.classList.contains('warn') && els.msg.textContent.startsWith('Nothing')) say('');
+  }
+
+  // Finds an answer for the active clue that still leaves a way to finish
+  // the rest, using the familiar answers at the front of each list.
+  function routeWord() {
+    const bits = (w) => [...w].reduce((m, c) => m | (1 << (c.charCodeAt(0) - 65)), 0);
+    const used = [...burnedLetters()].reduce((m, c) => m | bits(c), 0);
+    const pool = (i) => {
+      const own = puzzle.solution[i];
+      return [own, ...puzzle.clues[i].answers.slice(0, 15).filter((w) => w !== own)];
+    };
+    const rest = puzzle.clues.map((c, i) => i).filter((i) => !state.locked[i] && i !== state.active);
+    const finishes = (k, mask) => k === rest.length
+      || pool(rest[k]).some((w) => !(bits(w) & mask) && finishes(k + 1, mask | bits(w)));
+    return pool(state.active).find((w) => !(bits(w) & used) && finishes(0, used | bits(w)));
+  }
+
+  function hint() {
+    if (finished()) return;
+    const word = routeWord();
+    if (!word) {
+      say('No way through from here. Undo a word.', true, true);
+      return;
+    }
+    state.hints++;
+    typing = word[0];
+    save();
+    render();
+    renderKeys();
+    say(`${word.length} letters, starts with ${word[0]}.`, false, true);
+    els.msg.dataset.hint = '1';
   }
 
   let armed = false;
@@ -347,7 +387,8 @@
 
   function resultText() {
     const u = state.undos === 1 ? '1 undo' : `${state.undos} undos`;
-    const line = state.revealed ? 'gave up' : `solved · ${u}`;
+    const h = state.hints ? ` · ${state.hints === 1 ? '1 hint' : state.hints + ' hints'}` : '';
+    const line = state.revealed ? 'gave up' : `solved · ${u}${h}`;
     const url = location.protocol.startsWith('http') ? `\n${location.origin}${location.pathname}` : '';
     return `Burn No. ${index + 1}\n${line}${url}`;
   }
@@ -424,6 +465,7 @@
   els.prev.addEventListener('click', () => index > 0 && load(index - 1));
   els.next.addEventListener('click', () => index < todayIndex && load(index + 1));
   els.reveal.addEventListener('click', reveal);
+  els.hint.addEventListener('click', hint);
   $('help-btn').addEventListener('click', () => els.help.showModal());
   $('share').addEventListener('click', share);
 

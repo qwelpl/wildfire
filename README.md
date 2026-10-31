@@ -2,7 +2,8 @@
 
 A daily word puzzle. Answer four clues, each of which has several right
 answers. Every letter you use burns, so no letter can appear in two
-answers. Only one combination works.
+answers. Stuck? Hint gives the length and first letter of a word that
+still leaves a way through.
 
 ## Run
 
@@ -32,8 +33,8 @@ To rebuild `js/puzzles.js`:
 node tools/generate.mjs 120
 ```
 
-The generator builds each puzzle from the hand-picked answers: exactly
-one combination of them shares no letters, and at least two clues have
-their most obvious answer as a trap. Players can use any accepted
-synonym, so other routes through a puzzle may exist. Puzzle 1 is
+The generator builds each puzzle from the hand-picked answers. It
+favors sets where the obvious answers mostly fit (usually one clue's
+first guess gets in the way), with several working combinations and
+familiar words. Players can use any accepted synonym on top of that. Puzzle 1 is
 October 30, 2026, and the list wraps after the last puzzle.

@@ -1,8 +1,19 @@
 // Builds js/puzzles.js: daily sets of 4 clues with exactly one valid way to
 // answer them all without reusing a letter across words.
 // Usage: node tools/generate.mjs [count]
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { GROUPS, CLASHES } from './groups.mjs';
+import { BLOCK } from './blocklist.mjs';
+
+// Every word a clue accepts: the hand-picked answers plus the thesaurus
+// expansion from expand.py, minus wrong-sense words. Solutions only ever
+// use hand-picked answers, but uniqueness is checked against all of them.
+const EXPANDED = JSON.parse(readFileSync(new URL('./expanded.json', import.meta.url)));
+const ACCEPTED = Object.fromEntries(Object.keys(GROUPS).map((n) => {
+  const blocked = new Set((BLOCK[n] ?? '').split(' '));
+  const extra = (EXPANDED[n] ?? []).filter((w) => !blocked.has(w));
+  return [n, [...new Set([...GROUPS[n], ...extra])]];
+}));
 
 const COUNT = Number(process.argv[2] ?? 120);
 const START = '2026-10-30';
@@ -25,18 +36,19 @@ const mask = (word) => {
 };
 
 const names = Object.keys(GROUPS);
-const masks = Object.fromEntries(names.map((n) => [n, GROUPS[n].map(mask)]));
+const masks = Object.fromEntries(names.map((n) => [n, ACCEPTED[n].map(mask)]));
 const clash = new Set(CLASHES.flatMap(([a, b]) => [`${a}|${b}`, `${b}|${a}`]));
 
+// Two clues can't share a meaning: no hand-picked answer of one may be
+// accepted by another, and no answer may be another clue's own word.
 function compatible(set) {
-  const seen = new Set();
   for (let i = 0; i < set.length; i++) {
-    for (let j = i + 1; j < set.length; j++) {
+    for (let j = 0; j < set.length; j++) {
+      if (i === j) continue;
       if (clash.has(`${set[i]}|${set[j]}`)) return false;
-    }
-    for (const w of GROUPS[set[i]]) {
-      if (seen.has(w) || names.includes(w.toLowerCase())) return false;
-      seen.add(w);
+      const other = new Set(ACCEPTED[set[j]]);
+      if (other.has(set[i].toUpperCase())) return false;
+      if (GROUPS[set[i]].some((w) => other.has(w))) return false;
     }
   }
   return true;
@@ -48,7 +60,7 @@ function solutions(set, limit = 2) {
   (function walk(i, used) {
     if (found.length >= limit) return;
     if (i === set.length) { found.push([...pick]); return; }
-    const words = GROUPS[set[i]];
+    const words = ACCEPTED[set[i]];
     const ms = masks[set[i]];
     for (let k = 0; k < words.length; k++) {
       if (ms[k] & used) continue;
@@ -78,6 +90,7 @@ while (puzzles.length < COUNT) {
     const sols = solutions(set);
     if (sols.length !== 1) continue;
     const sol = sols[0];
+    if (!set.every((n, i) => GROUPS[n].includes(sol[i]))) continue;
     const key = [...sol].sort().join(',');
     if (usedSolutions.has(key)) continue;
     // How many clues have their most obvious answer as a trap.
@@ -93,7 +106,7 @@ while (puzzles.length < COUNT) {
   best.set.forEach((n) => uses[n]++);
   usedSolutions.add(best.key);
   puzzles.push({
-    clues: best.set.map((n) => ({ clue: n, answers: GROUPS[n] })),
+    clues: best.set.map((n) => ({ clue: n, answers: ACCEPTED[n] })),
     solution: best.sol,
   });
 }

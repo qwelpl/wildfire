@@ -3,11 +3,11 @@
   --ink: #1c1916;
   --muted: #8b8379;
   --line: #e2dbd0;
-  --key: #e8e1d6;
-  --key-press: #dcd3c6;
+  --tile: #e8e1d6;
+  --tile-press: #dcd3c6;
   --ember: #c8441c;
   --char: #2a2522;
-  --ash: #6e665e;
+  --char-text: #b3a99d;
   --serif: 'Fraunces', Georgia, serif;
   --sans: 'IBM Plex Sans', system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, monospace;
@@ -20,11 +20,11 @@
     --ink: #ece6dc;
     --muted: #857d73;
     --line: #2a2622;
-    --key: #24201c;
-    --key-press: #2e2924;
+    --tile: #24201c;
+    --tile-press: #2e2924;
     --ember: #e05a2b;
     --char: #070606;
-    --ash: #48423c;
+    --char-text: #6e665e;
     color-scheme: dark;
   }
 }
@@ -34,11 +34,11 @@
   --ink: #ece6dc;
   --muted: #857d73;
   --line: #2a2622;
-  --key: #24201c;
-  --key-press: #2e2924;
+  --tile: #24201c;
+  --tile-press: #2e2924;
   --ember: #e05a2b;
   --char: #070606;
-  --ash: #48423c;
+  --char-text: #6e665e;
   color-scheme: dark;
 }
 
@@ -142,13 +142,16 @@ button:focus-visible {
   text-underline-offset: 3px;
 }
 
+.text-btn.small:hover { color: var(--ink); }
+.text-btn.small:disabled { opacity: 0.35; cursor: default; }
+
 /* Board */
 
 main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding-top: 20px;
+  padding: 20px 0 24px;
 }
 
 .meta-line {
@@ -158,102 +161,98 @@ main {
   white-space: nowrap;
   font-size: 13px;
   color: var(--muted);
-  padding-bottom: 12px;
 }
 
 #tally { font-family: var(--mono); font-size: 12px; }
 
-.clues {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--line);
+.current {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  height: 64px;
+  padding-top: 18px;
 }
 
-.clue {
-  position: relative;
+#word {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+
+#word.bad { color: var(--muted); }
+
+#gain {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ember);
+}
+
+.board {
   display: grid;
-  grid-template-columns: 96px 1fr auto;
-  align-items: center;
-  gap: 12px;
-  min-height: 68px;
-  padding: 0 4px 0 14px;
-  border-bottom: 1px solid var(--line);
-  cursor: pointer;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.clue::before {
+.tile {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  background: var(--tile);
+  font-family: var(--mono);
+  font-size: clamp(20px, 6.5vw, 28px);
+  font-weight: 500;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.tile.burned {
+  background: var(--char);
+  color: var(--char-text);
+}
+
+/* Tiles on fire right now have a small ember mark. */
+.tile.burned::after {
   content: '';
   position: absolute;
-  left: 0;
-  top: 18px;
-  bottom: 18px;
-  width: 2px;
+  left: 50%;
+  bottom: 9px;
+  width: 14px;
+  height: 2px;
+  margin-left: -7px;
+  border-radius: 1px;
   background: var(--ember);
-  transform: scaleY(0);
-  transition: transform 160ms ease;
 }
 
-.clue.active::before { transform: scaleY(1); }
-
-.label {
-  font-family: var(--serif);
-  font-size: 22px;
-  font-style: italic;
+.tile.sel {
+  box-shadow: inset 0 0 0 2px var(--ember);
+  color: var(--ember);
 }
 
-.clue.active .label { color: var(--ember); }
-.clue.locked .label { color: var(--muted); }
+.tile.sel:not(.burned) { background: var(--tile-press); }
+.tile.end { box-shadow: inset 0 0 0 3px var(--ember); }
 
-.word {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  min-height: 32px;
-  font-family: var(--mono);
-  font-size: 22px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
+.tile.catching { animation: catch 700ms ease-out both; }
+
+@keyframes catch {
+  0% { background: var(--tile); color: var(--ink); }
+  25% { background: var(--ember); color: var(--paper); }
+  100% { background: var(--char); color: var(--char-text); }
 }
 
-.word .dash { color: var(--line); letter-spacing: 0.2em; }
+.tile.cue { animation: cue 1.2s ease-in-out 3; }
 
-.word .ch.lit { animation: lit 700ms ease-out both; }
-
-@keyframes lit {
-  0% { color: var(--ember); transform: translateY(0); }
-  100% { color: var(--ink); transform: translateY(0); }
+@keyframes cue {
+  50% { box-shadow: inset 0 0 0 2px var(--ember); }
 }
 
-.caret {
-  width: 2px;
-  height: 24px;
-  background: var(--ember);
-  animation: blink 1s steps(1) infinite;
-}
-
-@keyframes blink { 50% { opacity: 0; } }
-
-.side {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--muted);
-  text-align: right;
-  white-space: nowrap;
-}
-
-.unburn {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--muted);
-  padding: 6px 0 6px 8px;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.unburn:hover { color: var(--ink); }
-
-.clue.shake { animation: shake 280ms ease; }
+.board.shake { animation: shake 280ms ease; }
 
 @keyframes shake {
   20% { transform: translateX(-5px); }
@@ -268,7 +267,10 @@ main {
   align-items: baseline;
   gap: 12px;
   min-height: 52px;
-  padding-top: 14px;
+  padding-top: 16px;
+  max-width: 400px;
+  width: 100%;
+  margin: 0 auto;
 }
 
 #msg {
@@ -285,64 +287,26 @@ main {
   flex-shrink: 0;
 }
 
-/* Keyboard */
-
-.keyboard {
+.played {
   display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 12px 0 18px;
-  user-select: none;
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-  gap: 5px;
-}
-
-.key {
-  flex: 1;
-  max-width: 44px;
-  height: 54px;
-  border-radius: 6px;
-  background: var(--key);
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  max-width: 400px;
+  width: 100%;
+  margin: 4px auto 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+  counter-reset: n;
   font-family: var(--mono);
-  font-size: 16px;
-  font-weight: 500;
-  border-bottom: 2px solid transparent;
-  transition: background 120ms ease;
+  font-size: 13px;
 }
 
-.key.wide {
-  max-width: 68px;
-  flex: 1.5;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-}
+.played:empty { display: none; }
 
-.key:active { background: var(--key-press); }
-
-.key.hot {
-  color: var(--ember);
-  border-bottom-color: var(--ember);
-}
-
-.key.burned {
-  background: var(--char);
-  color: var(--ash);
-  cursor: default;
-}
-
-.key.burning { animation: catch 650ms ease-out both; }
-
-@keyframes catch {
-  0% { background: var(--key); color: var(--ink); }
-  25% { background: var(--ember); color: var(--paper); }
-  100% { background: var(--char); color: var(--ash); }
-}
-
-.key.shake { animation: shake 260ms ease; }
+.played li { counter-increment: n; }
+.played li::before { content: counter(n) ' '; color: var(--muted); }
+.played li span { color: var(--ember); font-size: 11px; margin-left: 4px; }
 
 /* Dialogs */
 
@@ -376,29 +340,6 @@ dialog strong { color: var(--ember); font-weight: 500; }
 
 .fine { font-size: 13px !important; color: var(--muted); }
 
-.example {
-  margin: 16px 0 10px;
-  border-top: 1px solid var(--line);
-}
-
-.example div {
-  display: flex;
-  align-items: baseline;
-  gap: 16px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.ex-clue {
-  width: 56px;
-  font-family: var(--serif);
-  font-style: italic;
-  font-size: 18px;
-}
-
-.ex-word { font-family: var(--mono); font-weight: 500; }
-.ex-word s { color: var(--muted); text-decoration-color: var(--ember); }
-
 .primary, .ghost {
   height: 44px;
   padding: 0 20px;
@@ -413,22 +354,23 @@ dialog strong { color: var(--ember); font-weight: 500; }
 #help form { margin-top: 18px; }
 #help .primary { width: 100%; }
 
-.done-words {
-  list-style: none;
+.compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
   margin: 4px 0 18px;
-  padding: 0;
+  padding-top: 12px;
   border-top: 1px solid var(--line);
 }
 
-.done-words li {
-  display: flex;
-  justify-content: space-between;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--line);
+.compare ol {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.7;
 }
-
-.done-words .c { font-family: var(--serif); font-style: italic; color: var(--muted); }
-.done-words .w { font-family: var(--mono); font-weight: 500; }
 
 .stats {
   display: grid;
@@ -452,10 +394,9 @@ dialog strong { color: var(--ember); font-weight: 500; }
 
 .actions .primary { flex: 1; }
 
-@media (max-height: 680px) {
-  .clue { min-height: 56px; }
-  .key { height: 48px; }
+@media (max-height: 700px) {
   main { padding-top: 12px; }
+  .current { height: 52px; padding-top: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,25 +1,17 @@
-// Builds js/puzzles.js: daily sets of 4 clues that can be answered without
-// reusing a letter across words, with several routes so it stays forgiving.
+// Builds js/boards.js: one 5x5 letter grid per day, a starting fire, and
+// par, the fewest words that burn the whole board.
 // Usage: node tools/generate.mjs [count]
 import { readFileSync, writeFileSync } from 'node:fs';
-import { GROUPS, CLASHES } from './groups.mjs';
-import { BLOCK } from './blocklist.mjs';
 
-// Every word a clue accepts: the hand-picked answers plus the thesaurus
-// expansion from expand.py, minus wrong-sense words in blocklist.mjs.
-// The expansion is huge and loose, so puzzles are built and checked for
-// uniqueness on the hand-picked answers only; the game accepts any word
-// in the full list.
-const EXPANDED = JSON.parse(readFileSync(new URL('./expanded.json', import.meta.url)));
-const ACCEPTED = Object.fromEntries(Object.keys(GROUPS).map((n) => {
-  const blocked = new Set((BLOCK[n] ?? '').split(' '));
-  const extra = (EXPANDED[n] ?? []).filter((w) => !blocked.has(w));
-  return [n, [...new Set([...GROUPS[n], ...extra])]];
-}));
+const COUNT = Number(process.argv[2] ?? 365);
+const START = '2026-10-31';
+const SIZE = 5;
+const N = SIZE * SIZE;
+const FULL = 2 ** N - 1;
+const MIN_PAR = 5;
+const MAX_PAR = 7;
 
-const COUNT = Number(process.argv[2] ?? 120);
-const START = '2026-10-30';
-const CLUES = 4;
+const COMMON = readFileSync(new URL('./common.txt', import.meta.url), 'utf8').split('\n').filter(Boolean);
 
 function mulberry32(seed) {
   return () => {
@@ -31,93 +23,100 @@ function mulberry32(seed) {
 }
 const rand = mulberry32(20261031);
 
-const mask = (word) => {
-  let m = 0;
-  for (const ch of word) m |= 1 << (ch.charCodeAt(0) - 65);
-  return m;
+// Rough English letter weights. No Q, since it is useless without U.
+const WEIGHTS = {
+  E: 12, A: 9, I: 8, O: 8, U: 3,
+  T: 9, N: 7, S: 7, R: 7, H: 4, L: 5, D: 4, C: 4, M: 3, P: 3,
+  G: 3, B: 2, F: 2, Y: 2, W: 2, K: 1.5, V: 1, X: 0.4, J: 0.3, Z: 0.3,
 };
+const VOWELS = new Set('AEIOU');
+const BAG = Object.entries(WEIGHTS);
+const TOTAL = BAG.reduce((s, [, w]) => s + w, 0);
 
-const names = Object.keys(GROUPS);
-const masks = Object.fromEntries(names.map((n) => [n, GROUPS[n].map(mask)]));
-const clash = new Set(CLASHES.flatMap(([a, b]) => [`${a}|${b}`, `${b}|${a}`]));
+function letter() {
+  let r = rand() * TOTAL;
+  for (const [ch, w] of BAG) if ((r -= w) < 0) return ch;
+  return 'E';
+}
 
-// Two clues can't share a meaning: no hand-picked answer may belong to
-// both, and no answer may be another clue's own word.
-function compatible(set) {
-  for (let i = 0; i < set.length; i++) {
-    for (let j = 0; j < set.length; j++) {
-      if (i === j) continue;
-      if (clash.has(`${set[i]}|${set[j]}`)) return false;
-      const other = new Set(GROUPS[set[j]]);
-      if (other.has(set[i].toUpperCase())) return false;
-      if (GROUPS[set[i]].some((w) => other.has(w))) return false;
-    }
+function grid() {
+  for (;;) {
+    const g = Array.from({ length: N }, letter);
+    const vowels = g.filter((c) => VOWELS.has(c)).length;
+    const most = Math.max(...Object.values(g.reduce((m, c) => ((m[c] = (m[c] ?? 0) + 1), m), {})));
+    if (vowels >= 8 && vowels <= 10 && most <= 3) return g;
   }
-  return true;
 }
 
-function solutions(set, limit = 2) {
-  const found = [];
-  const pick = [];
-  (function walk(i, used) {
-    if (found.length >= limit) return;
-    if (i === set.length) { found.push([...pick]); return; }
-    const words = GROUPS[set[i]];
-    const ms = masks[set[i]];
-    for (let k = 0; k < words.length; k++) {
-      if (ms[k] & used) continue;
-      pick.push(words[k]);
-      walk(i + 1, used | ms[k]);
-      pick.pop();
-    }
-  })(0, 0);
-  return found;
-}
-
-const uses = Object.fromEntries(names.map((n) => [n, 0]));
-const usedSolutions = new Set();
-const puzzles = [];
-
-while (puzzles.length < COUNT) {
-  // Favor groups that have appeared least so far.
-  const pool = [...names].sort((a, b) => uses[a] - uses[b] || rand() - 0.5).slice(0, 45);
-  let best = null;
-  for (let attempt = 0; attempt < 4000; attempt++) {
-    const set = [];
-    while (set.length < CLUES) {
-      const n = pool[Math.floor(rand() * pool.length)];
-      if (!set.includes(n)) set.push(n);
-    }
-    if (!compatible(set)) continue;
-    const sols = solutions(set, 200);
-    if (!sols.length) continue;
-    // Show the most familiar route as the answer.
-    const rarityOf = (s) => set.reduce((sum, n, i) => sum + GROUPS[n].indexOf(s[i]), 0);
-    const sol = sols.reduce((a, b) => (rarityOf(b) < rarityOf(a) ? b : a));
-    const key = [...sol].sort().join(',');
-    if (usedSolutions.has(key)) continue;
-    // Prefer puzzles where the obvious answers mostly fit, with several
-    // routes and familiar words.
-    const traps = set.filter((n, i) => GROUPS[n][0] !== sol[i]).length;
-    const score = Math.min(sols.length, 20) - 3 * rarityOf(sol) - 6 * traps;
-    if (!best || score > best.score) best = { set, sol, score, key };
+const NEIGHBORS = Array.from({ length: N }, (_, i) => {
+  const r = Math.floor(i / SIZE), c = i % SIZE, out = [];
+  for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+    const rr = r + dr, cc = c + dc;
+    if ((dr || dc) && rr >= 0 && rr < SIZE && cc >= 0 && cc < SIZE) out.push(rr * SIZE + cc);
   }
-  if (!best) throw new Error(`stuck at puzzle ${puzzles.length + 1}`);
-  best.set.forEach((n) => uses[n]++);
-  usedSolutions.add(best.key);
-  puzzles.push({
-    clues: best.set,
-    solution: best.sol,
-  });
+  return out;
+});
+
+const trie = {};
+for (const w of COMMON) {
+  let node = trie;
+  for (const ch of w) node = node[ch] ??= {};
+  node.$ = w;
 }
 
-const out = `// Generated by tools/generate.mjs. Do not edit by hand.
-window.BURN_DATA = ${JSON.stringify({
-  start: START,
-  words: Object.fromEntries(Object.entries(ACCEPTED).filter(([n]) => uses[n])),
-  puzzles,
-})};
-`;
-writeFileSync(new URL('../js/puzzles.js', import.meta.url), out);
-console.log(`wrote ${puzzles.length} puzzles`);
-console.log(puzzles.slice(0, 3).map((p) => p.clues.map((c, i) => `${c}=${p.solution[i]}`).join('  ')).join('\n'));
+// Every common word on the board, as the set of tiles each path covers.
+function moves(g) {
+  const seen = new Map();
+  const walk = (i, node, mask) => {
+    const next = node[g[i]];
+    if (!next) return;
+    mask |= 1 << i;
+    if (next.$) {
+      const key = `${next.$}:${mask}`;
+      if (!seen.has(key)) seen.set(key, { word: next.$, mask });
+    }
+    for (const j of NEIGHBORS[i]) if (!(mask & (1 << j))) walk(j, next, mask);
+  };
+  for (let i = 0; i < N; i++) walk(i, trie, 0);
+  return [...seen.values()];
+}
+
+const bits = (m) => { let n = 0; while (m) { m &= m - 1; n++; } return n; };
+
+// Beam search for the shortest run of words that burns every tile.
+function par(all, fire, width = 1500) {
+  let beam = [{ burned: 1 << fire, line: [] }];
+  for (let depth = 1; depth <= MAX_PAR + 1; depth++) {
+    const next = new Map();
+    for (const s of beam) {
+      for (const m of all) {
+        if (!(m.mask & s.burned) || !(m.mask & ~s.burned)) continue;
+        const burned = (s.burned | m.mask) >>> 0;
+        if (burned === FULL) return [...s.line, m.word];
+        if (!next.has(burned)) next.set(burned, { burned, line: [...s.line, m.word] });
+      }
+    }
+    beam = [...next.values()].sort((a, b) => bits(b.burned) - bits(a.burned)).slice(0, width);
+  }
+  return null;
+}
+
+const CORNERS = [0, SIZE - 1, N - SIZE, N - 1];
+const boards = [];
+while (boards.length < COUNT) {
+  const g = grid();
+  const fire = CORNERS[Math.floor(rand() * 4)];
+  const all = moves(g);
+  if (all.length < 120) continue;
+  const line = par(all, fire);
+  if (!line || line.length < MIN_PAR || line.length > MAX_PAR) continue;
+  boards.push({ grid: g.join(''), fire, par: line.length, line });
+  if (boards.length % 25 === 0) console.log(`${boards.length}...`);
+}
+
+writeFileSync(new URL('../js/boards.js', import.meta.url), `// Generated by tools/generate.mjs. Do not edit by hand.
+window.WILDFIRE_BOARDS = ${JSON.stringify({ start: START, boards })};
+`);
+const pars = boards.reduce((m, b) => ((m[b.par] = (m[b.par] ?? 0) + 1), m), {});
+console.log(`wrote ${boards.length} boards, par counts`, pars);
+console.log(boards.slice(0, 3).map((b) => `${b.grid} fire=${b.fire} par=${b.par} ${b.line.join(' ')}`).join('\n'));

@@ -1,83 +1,117 @@
 (() => {
-  'use strict';
-
-  const DATA = window.BURN_DATA;
+  const DATA = window.WILDFIRE_BOARDS;
+  const WORDS = new Set(window.WILDFIRE_WORDS.split(' '));
+  const SIZE = 5;
+  const N = SIZE * SIZE;
+  const FULL = 2 ** N - 1;
   const DAY = 86400000;
-  const ROWS = ['QWERTYUIOP', 'ASDFGHJKL', '+ZXCVBNM-'];
-  const MAX_LEN = 12;
-  // While testing, start every puzzle fresh on each page load.
+  // Progress is not kept between page loads for now.
   const KEEP_PROGRESS = false;
 
   const $ = (id) => document.getElementById(id);
   const els = {
-    clues: $('clues'), msg: $('msg'), keyboard: $('keyboard'), number: $('number'),
-    date: $('date'), tally: $('tally'), prev: $('prev'), next: $('next'),
-    reveal: $('reveal'), hint: $('hint'), help: $('help'), done: $('done'),
+    board: $('board'), word: $('word'), gain: $('gain'), msg: $('msg'),
+    number: $('number'), date: $('date'), tally: $('tally'), prev: $('prev'), next: $('next'),
+    hint: $('hint'), undo: $('undo'), played: $('played'), help: $('help'), done: $('done'),
   };
 
-  // Storage can be unavailable (private mode, blocked site data).
   const store = {
     get(key, fallback) {
-      try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
+      try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); }
+      catch { return fallback; }
     },
     set(key, value) {
-      try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ }
     },
   };
 
-  const startUtc = Date.parse(DATA.start + 'T00:00:00Z');
-  const localDayUtc = (d) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
-  const todayIndex = Math.max(0, Math.floor((localDayUtc(new Date()) - startUtc) / DAY));
+  const startUtc = Date.parse(`${DATA.start}T00:00:00Z`);
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayIndex = Math.max(0, Math.floor((todayUtc - startUtc) / DAY));
 
-  let index = todayIndex;
-  let puzzle;
-  let state;
-  let typing = '';
+  const NEIGHBORS = Array.from({ length: N }, (_, i) => {
+    const r = Math.floor(i / SIZE), c = i % SIZE, out = [];
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const rr = r + dr, cc = c + dc;
+      if ((dr || dc) && rr >= 0 && rr < SIZE && cc >= 0 && cc < SIZE) out.push(rr * SIZE + cc);
+    }
+    return out;
+  });
+  const touching = (a, b) => NEIGHBORS[a].includes(b);
+  const bit = (i) => 2 ** i;
+  const has = (mask, i) => Math.floor(mask / bit(i)) % 2 === 1;
+  const maskOf = (path) => path.reduce((m, i) => (has(m, i) ? m : m + bit(i)), 0);
+  const count = (mask) => { let n = 0; for (let i = 0; i < N; i++) if (has(mask, i)) n++; return n; };
+  const overlap = (a, b) => { for (let i = 0; i < N; i++) if (has(a, i) && has(b, i)) return true; return false; };
+  const newTiles = (path, burned) => path.filter((i) => !has(burned, i));
+
+  // Familiar words only, so hints point at words people know.
+  const trie = {};
+  for (const w of window.WILDFIRE_COMMON.split(' ')) {
+    let node = trie;
+    for (const ch of w) node = node[ch] ??= {};
+    node.$ = w;
+  }
+
+  let index, board, state, moves;
+  let path = [];
+  let hintLevel = 0;
   let msgTimer;
-
-  const keys = {};
+  const tiles = [];
 
   function load(i) {
     index = i;
-    const p = DATA.puzzles[i % DATA.puzzles.length];
-    puzzle = { clues: p.clues.map((c) => ({ clue: c, answers: DATA.words[c] })), solution: p.solution };
-    const saved = KEEP_PROGRESS ? store.get(`burn:${i}`, null) : null;
-    state = saved && Array.isArray(saved.locked) && saved.locked.length === puzzle.clues.length
+    const b = DATA.boards[i % DATA.boards.length];
+    board = { letters: [...b.grid], fire: b.fire, par: b.par, line: b.line };
+    const saved = KEEP_PROGRESS ? store.get(`wildfire:${i}`, null) : null;
+    state = saved && Array.isArray(saved.played)
       ? saved
-      : { locked: puzzle.clues.map(() => null), undos: 0, hints: 0, solved: false, revealed: false };
-    state.hints ??= 0;
-    state.active = firstOpen() ?? 0;
-    typing = '';
+      : { played: [], hints: 0, done: false };
+    moves = findMoves();
+    path = [];
+    hintLevel = 0;
+    els.word.className = '';
     say('');
+    tiles.forEach((t, k) => { t.textContent = board.letters[k]; t.className = 'tile'; });
     render();
-    renderKeys();
-    checkDeadEnd();
   }
 
   function save() {
-    store.set(`burn:${index}`, {
-      locked: state.locked, undos: state.undos, hints: state.hints, solved: state.solved, revealed: state.revealed,
-    });
+    store.set(`wildfire:${index}`, state);
   }
 
-  const finished = () => state.solved || state.revealed;
+  const burned = () => state.played.reduce((m, p) => m | maskOf(p.path), bit(board.fire)) >>> 0;
+  const finished = () => state.done;
 
-  function burnedLetters() {
-    const set = new Set();
-    state.locked.forEach((w) => w && [...w].forEach((c) => set.add(c)));
-    return set;
-  }
-
-  function firstOpen(from = 0) {
-    const n = puzzle.clues.length;
-    for (let k = 0; k < n; k++) {
-      const i = (from + k) % n;
-      if (!state.locked[i]) return i;
-    }
-    return null;
+  // Every familiar word on the board, with the tiles each spelling uses.
+  function findMoves() {
+    const found = [];
+    const walk = (i, node, trail) => {
+      const next = node[board.letters[i]];
+      if (!next) return;
+      trail.push(i);
+      if (next.$) found.push({ word: next.$, path: [...trail] });
+      for (const j of NEIGHBORS[i]) if (!trail.includes(j)) walk(j, next, trail);
+      trail.pop();
+    };
+    for (let i = 0; i < N; i++) walk(i, trie, []);
+    return found;
   }
 
   // Rendering
+
+  function buildBoard() {
+    for (let i = 0; i < N; i++) {
+      const t = document.createElement('button');
+      t.className = 'tile';
+      t.dataset.i = i;
+      t.tabIndex = -1;
+      t.addEventListener('animationend', () => t.classList.remove('catching', 'cue'));
+      tiles.push(t);
+      els.board.append(t);
+    }
+  }
 
   function render() {
     const date = new Date(startUtc + index * DAY);
@@ -88,391 +122,316 @@
     els.prev.disabled = index === 0;
     els.next.disabled = index >= todayIndex;
 
-    const left = 26 - burnedLetters().size;
-    const plural = (n, w) => (n === 1 ? `1 ${w}` : `${n} ${w}s`);
-    els.tally.textContent = [
-      `${left} left`,
-      state.undos && plural(state.undos, 'undo'),
-      state.hints && plural(state.hints, 'hint'),
-    ].filter(Boolean).join(' · ');
-    els.reveal.hidden = finished();
-    els.hint.hidden = finished();
+    const lit = burned();
+    const hints = state.hints ? ` · ${state.hints === 1 ? '1 hint' : `${state.hints} hints`}` : '';
+    els.tally.textContent = `${count(lit)}/${N} · par ${board.par}${hints}`;
 
-    els.clues.replaceChildren(...puzzle.clues.map((c, i) => {
+    tiles.forEach((t, i) => {
+      t.classList.toggle('burned', has(lit, i));
+      t.classList.toggle('sel', path.includes(i));
+      t.classList.toggle('end', path.length > 1 && i === path[path.length - 1]);
+      t.setAttribute('aria-label', `${board.letters[i]}${has(lit, i) ? ', burning' : ''}`);
+    });
+
+    if (path.length) {
+      els.word.className = '';
+      els.word.textContent = path.map((i) => board.letters[i]).join('');
+      const fresh = newTiles(path, lit).length;
+      els.gain.textContent = path.some((i) => has(lit, i)) && fresh ? `+${fresh}` : '';
+    } else if (!els.word.classList.contains('bad')) {
+      els.word.textContent = '';
+      els.gain.textContent = '';
+    }
+
+    els.played.replaceChildren(...state.played.map((p) => {
       const li = document.createElement('li');
-      const word = state.locked[i];
-      li.className = 'clue' + (word ? ' locked' : '') + (i === state.active && !word && !finished() ? ' active' : '');
-      li.dataset.i = i;
-
-      const label = document.createElement('span');
-      label.className = 'label';
-      label.textContent = c.clue;
-
-      const wordEl = document.createElement('span');
-      wordEl.className = 'word';
-      const shown = word ?? (i === state.active ? typing : '');
-      for (const ch of shown) {
-        const s = document.createElement('span');
-        s.className = 'ch';
-        s.textContent = ch;
-        wordEl.append(s);
-      }
-      if (!word && i === state.active && !finished()) {
-        const caret = document.createElement('span');
-        caret.className = 'caret';
-        wordEl.append(caret);
-      } else if (!word) {
-        const dash = document.createElement('span');
-        dash.className = 'dash';
-        dash.textContent = '···';
-        wordEl.append(dash);
-      }
-
-      let side;
-      if (word && !finished()) {
-        side = document.createElement('button');
-        side.className = 'unburn';
-        side.textContent = 'undo';
-        side.setAttribute('aria-label', `Take back ${word}`);
-      } else {
-        side = document.createElement('span');
-        side.className = 'side';
-        side.textContent = word ? '' : `${c.answers.length} words`;
-      }
-
-      li.append(label, wordEl, side);
+      li.textContent = p.word;
+      const s = document.createElement('span');
+      s.textContent = `+${p.gained}`;
+      li.append(s);
       return li;
     }));
-  }
 
-  function buildKeyboard() {
-    for (const row of ROWS) {
-      const r = document.createElement('div');
-      r.className = 'row';
-      for (const k of row) {
-        const b = document.createElement('button');
-        b.className = 'key';
-        if (k === '+') {
-          b.textContent = 'ENTER';
-          b.classList.add('wide');
-          b.dataset.key = 'Enter';
-        } else if (k === '-') {
-          b.innerHTML = '&#9003;';
-          b.classList.add('wide');
-          b.dataset.key = 'Backspace';
-          b.setAttribute('aria-label', 'Delete');
-        } else {
-          b.textContent = k;
-          b.dataset.key = k;
-          b.addEventListener('animationend', () => b.classList.remove('burning', 'shake'));
-          keys[k] = b;
-        }
-        r.append(b);
-      }
-      els.keyboard.append(r);
-    }
-  }
-
-  function renderKeys(burningWord = '') {
-    const burned = burnedLetters();
-    const hot = new Set(typing);
-    const fresh = [...new Set(burningWord)];
-    for (const [k, b] of Object.entries(keys)) {
-      b.classList.toggle('burned', burned.has(k));
-      b.classList.toggle('hot', hot.has(k) && !burned.has(k));
-      b.disabled = burned.has(k);
-      if (!burned.has(k)) b.classList.remove('burning');
-      const order = fresh.indexOf(k);
-      if (order >= 0) {
-        b.classList.remove('burning');
-        void b.offsetWidth;
-        b.style.animationDelay = `${order * 70}ms`;
-        b.classList.add('burning');
-      }
-    }
+    els.undo.disabled = finished() || !state.played.length;
+    els.hint.disabled = finished();
   }
 
   function say(text, warn = false, sticky = false) {
     clearTimeout(msgTimer);
     els.msg.textContent = text;
     els.msg.className = warn ? 'warn' : '';
-    delete els.msg.dataset.hint;
-    if (text && !sticky) msgTimer = setTimeout(() => { els.msg.textContent = ''; checkDeadEnd(); }, 2600);
+    if (text && !sticky) msgTimer = setTimeout(() => { els.msg.textContent = ''; }, 2600);
   }
 
-  function shake(el) {
-    if (!el) return;
-    el.classList.remove('shake');
-    void el.offsetWidth;
-    el.classList.add('shake');
+  function shake() {
+    els.board.classList.remove('shake');
+    void els.board.offsetWidth;
+    els.board.classList.add('shake');
   }
+  els.board.addEventListener('animationend', (e) => {
+    if (e.target === els.board) els.board.classList.remove('shake');
+  });
 
-  const activeRow = () => els.clues.children[state.active];
+  // Spelling
 
-  // Actions
-
-  function type(letter) {
-    if (finished() || state.locked[state.active]) return;
-    if (burnedLetters().has(letter)) {
-      shake(keys[letter]);
-      say(`${letter} is burned.`, true);
-      return;
-    }
-    if (typing.length >= MAX_LEN) return;
-    const keep = els.msg.dataset.hint || (els.msg.classList.contains('warn') && els.msg.textContent.startsWith('Nothing'));
-    if (!keep) say('');
-    typing += letter;
+  function tap(i) {
+    if (finished()) return;
+    const last = path[path.length - 1];
+    if (i === last) return submit();
+    const at = path.indexOf(i);
+    if (at >= 0) path = path.slice(0, at + 1);
+    else if (path.length && touching(last, i)) path.push(i);
+    else path = [i];
+    els.word.classList.remove('bad');
     render();
-    renderKeys();
   }
 
-  function erase() {
-    if (!typing) return;
-    typing = typing.slice(0, -1);
+  function extend(i) {
+    const last = path[path.length - 1];
+    if (i === last) return;
+    if (i === path[path.length - 2]) path.pop();
+    else if (!path.includes(i) && touching(last, i)) path.push(i);
+    else return;
     render();
-    renderKeys();
+  }
+
+  function clear() {
+    path = [];
+    render();
+  }
+
+  function reject(text) {
+    els.word.textContent = path.map((i) => board.letters[i]).join('');
+    els.word.className = 'bad';
+    els.gain.textContent = '';
+    path = [];
+    shake();
+    say(text, true);
+    render();
   }
 
   function submit() {
-    if (finished() || !typing) return;
-    const clue = puzzle.clues[state.active];
-    if (!clue.answers.includes(typing)) {
-      shake(activeRow());
-      say(typing.length < 3 ? 'Too short.' : `${typing} isn't on the list for “${clue.clue}”.`, true);
-      return;
-    }
-    const word = typing;
-    const at = state.active;
-    state.locked[at] = word;
-    typing = '';
+    if (finished() || !path.length) return;
+    tiles.forEach((t) => t.classList.remove('cue'));
+    const word = path.map((i) => board.letters[i]).join('');
+    const lit = burned();
+    if (word.length < 3) return reject('Three letters or more.');
+    if (!WORDS.has(word)) return reject(`${word} isn't in the word list.`);
+    if (!path.some((i) => has(lit, i))) return reject('Use at least one tile that’s on fire.');
+    const fresh = newTiles(path, lit);
+    if (!fresh.length) return reject('Nothing new would catch.');
+    if (state.played.some((p) => p.word === word)) return reject(`Already played ${word}.`);
+
+    state.played.push({ word, path: [...path], gained: fresh.length });
+    path = [];
+    hintLevel = 0;
+    els.word.className = '';
     say('');
-
-    if (state.locked.every(Boolean)) {
-      state.solved = true;
-      save();
+    if (burned() === FULL) {
+      state.done = true;
       recordWin();
-    } else {
-      state.active = firstOpen(at + 1);
-      save();
     }
-
+    save();
     render();
-    activeRowLit(at);
-    renderKeys(word);
-    if (finished()) setTimeout(showDone, 900);
-    else checkDeadEnd();
-  }
-
-  function activeRowLit(i) {
-    els.clues.children[i].querySelectorAll('.ch').forEach((s, k) => {
-      s.style.animationDelay = `${k * 70}ms`;
-      s.classList.add('lit');
+    fresh.forEach((i, k) => {
+      tiles[i].style.animationDelay = `${k * 60}ms`;
+      tiles[i].classList.add('catching');
     });
+    if (finished()) setTimeout(showDone, 1100);
   }
 
-  function unburn(i) {
-    if (finished() || !state.locked[i]) return;
-    state.locked[i] = null;
-    state.undos++;
-    state.active = i;
-    typing = '';
+  function undo() {
+    if (finished() || !state.played.length) return;
+    state.played.pop();
+    path = [];
+    hintLevel = 0;
     save();
     say('');
     render();
-    renderKeys();
-    checkDeadEnd();
   }
 
-  function select(i) {
-    if (finished() || state.locked[i] || i === state.active) return;
-    state.active = i;
-    typing = '';
-    if (els.msg.dataset.hint) say('');
-    render();
-    renderKeys();
-  }
-
-  function move(step) {
-    const n = puzzle.clues.length;
-    for (let k = 1; k <= n; k++) {
-      const i = (state.active + step * k + n * k) % n;
-      if (!state.locked[i]) return select(i);
+  // The move that burns the most new tiles, preferring shorter words.
+  function bestMove() {
+    const lit = burned();
+    let best = null;
+    for (const m of moves) {
+      if (state.played.some((p) => p.word === m.word)) continue;
+      if (!m.path.some((i) => has(lit, i))) continue;
+      const gain = newTiles(m.path, lit).length;
+      if (!gain) continue;
+      if (!best || gain > best.gain || (gain === best.gain && m.word.length < best.word.length)) {
+        best = { ...m, gain };
+      }
     }
-  }
-
-  function checkDeadEnd() {
-    if (finished()) return;
-    const burned = burnedLetters();
-    const stuck = puzzle.clues.find((c, i) =>
-      !state.locked[i] && !c.answers.some((w) => ![...w].some((ch) => burned.has(ch))));
-    if (stuck) say(`Nothing for “${stuck.clue}” survives. Undo a word.`, true, true);
-    else if (els.msg.classList.contains('warn') && els.msg.textContent.startsWith('Nothing')) say('');
-  }
-
-  // Finds an answer for the active clue that still leaves a way to finish
-  // the rest, using the familiar answers at the front of each list.
-  function routeWord() {
-    const bits = (w) => [...w].reduce((m, c) => m | (1 << (c.charCodeAt(0) - 65)), 0);
-    const used = [...burnedLetters()].reduce((m, c) => m | bits(c), 0);
-    const pool = (i) => {
-      const own = puzzle.solution[i];
-      return [own, ...puzzle.clues[i].answers.slice(0, 15).filter((w) => w !== own)];
-    };
-    const rest = puzzle.clues.map((c, i) => i).filter((i) => !state.locked[i] && i !== state.active);
-    const finishes = (k, mask) => k === rest.length
-      || pool(rest[k]).some((w) => !(bits(w) & mask) && finishes(k + 1, mask | bits(w)));
-    return pool(state.active).find((w) => !(bits(w) & used) && finishes(0, used | bits(w)));
+    return best;
   }
 
   function hint() {
     if (finished()) return;
-    const word = routeWord();
-    if (!word) {
-      say('No way through from here. Undo a word.', true, true);
+    const m = bestMove();
+    if (!m) {
+      say('No familiar word fits from here. Try undo.', true);
       return;
     }
     state.hints++;
-    typing = word[0];
-    save();
-    render();
-    renderKeys();
-    say(`${word.length} letters, starts with ${word[0]}.`, false, true);
-    els.msg.dataset.hint = '1';
-  }
-
-  let armed = false;
-
-  function reveal() {
-    if (finished()) return;
-    if (!armed) {
-      armed = true;
-      els.reveal.textContent = 'Tap again to give up';
-      setTimeout(() => { armed = false; els.reveal.textContent = 'Give up'; }, 3000);
-      return;
+    hintLevel++;
+    if (hintLevel === 1) {
+      path = [];
+      render();
+      const t = tiles[m.path[0]];
+      t.classList.remove('cue');
+      void t.offsetWidth;
+      t.classList.add('cue');
+      say(`Try a ${m.word.length}-letter word starting at the marked tile.`, false, true);
+    } else {
+      tiles.forEach((t) => t.classList.remove('cue'));
+      path = [...m.path];
+      render();
+      say(`${m.word} burns ${m.gain} new. Tap the word to play it.`, false, true);
     }
-    state.locked = [...puzzle.solution];
-    state.revealed = true;
-    typing = '';
     save();
-    recordLoss();
-    render();
-    renderKeys();
-    showDone();
   }
 
-  // Stats and results
+  // Pointer input: drag to spell and release to play, or tap tile by tile.
+
+  let drag = null;
+
+  function tileAt(x, y) {
+    const el = document.elementFromPoint(x, y)?.closest('.tile');
+    if (!el) return null;
+    // Only count the middle of a tile so diagonals are easy to hit.
+    const r = el.getBoundingClientRect();
+    const dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height / 2);
+    return Math.hypot(dx, dy) < r.width * 0.42 ? Number(el.dataset.i) : null;
+  }
+
+  els.board.addEventListener('pointerdown', (e) => {
+    if (finished() || e.button > 0) return;
+    const i = tileAt(e.clientX, e.clientY);
+    if (i === null) return;
+    e.preventDefault();
+    els.board.setPointerCapture(e.pointerId);
+    drag = { start: i, moved: false };
+  });
+
+  els.board.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const i = tileAt(e.clientX, e.clientY);
+    if (i === null) return;
+    if (!drag.moved) {
+      if (i === drag.start) return;
+      drag.moved = true;
+      if (path[path.length - 1] !== drag.start) path = [drag.start];
+      els.word.classList.remove('bad');
+    }
+    extend(i);
+  });
+
+  const endDrag = (e) => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    if (e.type === 'pointercancel') return;
+    if (d.moved) submit();
+    else tap(d.start);
+  };
+  els.board.addEventListener('pointerup', endDrag);
+  els.board.addEventListener('pointercancel', endDrag);
+
+  // Results
 
   function stats() {
-    return store.get('burn:stats', { played: 0, solved: 0, streak: 0, best: 0, last: null });
+    return store.get('wildfire:stats', { played: 0, par: 0, streak: 0, best: 0, last: null });
   }
 
   function recordWin() {
     if (index !== todayIndex) return;
     const s = stats();
+    if (s.last === index) return;
     s.played++;
-    s.solved++;
+    if (state.played.length <= board.par) s.par++;
     s.streak = s.last === index - 1 ? s.streak + 1 : 1;
     s.best = Math.max(s.best, s.streak);
     s.last = index;
-    store.set('burn:stats', s);
-  }
-
-  function recordLoss() {
-    if (index !== todayIndex) return;
-    const s = stats();
-    s.played++;
-    s.streak = 0;
-    store.set('burn:stats', s);
+    store.set('wildfire:stats', s);
   }
 
   function resultText() {
-    const u = state.undos === 1 ? '1 undo' : `${state.undos} undos`;
-    const h = state.hints ? ` · ${state.hints === 1 ? '1 hint' : state.hints + ' hints'}` : '';
-    const line = state.revealed ? 'gave up' : `solved · ${u}${h}`;
+    const n = state.played.length;
+    const h = state.hints ? ` · ${state.hints === 1 ? '1 hint' : `${state.hints} hints`}` : '';
     const url = location.protocol.startsWith('http') ? `\n${location.origin}${location.pathname}` : '';
-    return `Burn No. ${index + 1}\n${line}${url}`;
+    return `Wildfire No. ${index + 1}\n${n} words · par ${board.par}${h}${url}`;
   }
 
   function showDone() {
-    $('done-title').textContent = state.revealed ? 'The answer' : state.undos === 0 ? 'Burned clean' : 'Solved';
-    $('done-line').textContent = state.revealed
-      ? 'One set of words that shares no letters.'
-      : state.undos === 0 ? 'No undos. Nicely done.' : `Solved with ${state.undos === 1 ? '1 undo' : state.undos + ' undos'}.`;
+    const n = state.played.length;
+    const diff = n - board.par;
+    $('done-title').textContent = diff < 0 ? 'Under par' : diff === 0 ? 'On par' : 'Burned down';
+    $('done-line').textContent = diff < 0
+      ? `${n} words. That beats our best of ${board.par}.`
+      : diff === 0 ? `${n} words, same as our best.` : `${n} words. Par was ${board.par}.`;
 
-    $('done-words').replaceChildren(...puzzle.clues.map((c, i) => {
+    const list = (el, words) => el.replaceChildren(...words.map((w) => {
       const li = document.createElement('li');
-      li.innerHTML = '<span class="c"></span><span class="w"></span>';
-      li.firstChild.textContent = c.clue;
-      li.lastChild.textContent = state.locked[i];
+      li.textContent = w;
       return li;
     }));
+    list($('done-yours'), state.played.map((p) => p.word));
+    list($('done-par'), board.line);
 
     const s = stats();
-    const pct = s.played ? Math.round((s.solved / s.played) * 100) : 0;
-    $('stats').innerHTML = [[s.played, 'played'], [pct, 'solved %'], [s.streak, 'streak'], [s.best, 'best']]
-      .map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('');
+    $('stats').replaceChildren(...[
+      [s.played, 'Played'], [s.par, 'Par or better'], [s.streak, 'Streak'], [s.best, 'Best'],
+    ].map(([v, label]) => {
+      const d = document.createElement('div');
+      d.className = 'stat';
+      d.innerHTML = '<b></b><span></span>';
+      d.firstChild.textContent = v;
+      d.lastChild.textContent = label;
+      return d;
+    }));
 
-    const now = new Date();
-    const msLeft = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - now;
-    const h = Math.max(0, Math.floor(msLeft / 3600000));
-    const m = Math.max(0, Math.floor((msLeft % 3600000) / 60000));
-    $('next-in').textContent = index === todayIndex ? `Next puzzle in ${h}h ${m}m.` : '';
-
-    if (!els.done.open) els.done.showModal();
+    const t = new Date();
+    const midnight = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1);
+    const mins = Math.max(1, Math.round((midnight - t) / 60000));
+    $('next-in').textContent = index === todayIndex
+      ? `Next board in ${Math.floor(mins / 60)}h ${mins % 60}m.`
+      : '';
+    $('share').textContent = 'Copy result';
+    els.done.showModal();
   }
 
   async function share() {
     const text = resultText();
-    const btn = $('share');
     try {
       await navigator.clipboard.writeText(text);
-      btn.textContent = 'Copied';
+      $('share').textContent = 'Copied';
     } catch {
-      btn.textContent = 'Copy failed';
+      $('share').textContent = 'Copy failed';
     }
-    setTimeout(() => { btn.textContent = 'Copy result'; }, 1600);
   }
 
-  // Events
-
-  els.keyboard.addEventListener('click', (e) => {
-    const b = e.target.closest('.key');
-    if (!b) return;
-    const k = b.dataset.key;
-    if (k === 'Enter') submit();
-    else if (k === 'Backspace') erase();
-    else type(k);
-  });
-
-  els.clues.addEventListener('click', (e) => {
-    const li = e.target.closest('.clue');
-    if (!li) return;
-    const i = Number(li.dataset.i);
-    if (e.target.closest('.unburn')) unburn(i);
-    else if (finished()) showDone();
-    else select(i);
-  });
+  // Wiring
 
   document.addEventListener('keydown', (e) => {
     if (els.help.open || els.done.open || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'Enter') { e.preventDefault(); submit(); }
-    else if (e.key === 'Backspace') erase();
-    else if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
-    else if (/^[a-z]$/i.test(e.key)) type(e.key.toUpperCase());
+    else if (e.key === 'Escape') clear();
+    else if (e.key === 'Backspace') { path.pop(); render(); }
   });
 
   els.prev.addEventListener('click', () => index > 0 && load(index - 1));
   els.next.addEventListener('click', () => index < todayIndex && load(index + 1));
-  els.reveal.addEventListener('click', reveal);
   els.hint.addEventListener('click', hint);
+  els.undo.addEventListener('click', undo);
+  els.word.addEventListener('click', submit);
   $('help-btn').addEventListener('click', () => els.help.showModal());
   $('share').addEventListener('click', share);
 
-  buildKeyboard();
+  buildBoard();
   load(todayIndex);
-  if (!store.get('burn:seen-help', false)) {
+  if (!store.get('wildfire:seen-help', false)) {
     els.help.showModal();
-    store.set('burn:seen-help', true);
+    store.set('wildfire:seen-help', true);
   }
 })();

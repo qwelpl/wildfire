@@ -1,40 +1,46 @@
-# Burn
+# Wildfire
 
-A daily word puzzle. Answer four clues, each of which has several right
-answers. Every letter you use burns, so no letter can appear in two
-answers. Stuck? Hint gives the length and first letter of a word that
-still leaves a way through.
+A daily word puzzle. One corner of a 5×5 letter board is on fire. Spell
+words by sliding across touching letters; every word has to use at least
+one burning tile, and the rest of its tiles catch. Burn the whole board
+in as few words as you can. Par is the fewest the generator found.
+
+Stuck? Hint marks where a good word starts, and a second tap shows the
+whole word.
 
 ## Run
 
-It's a static site. Open `index.html`, or serve the folder:
+It's a static page with no build step. Open `index.html`, or serve the
+folder:
 
 ```sh
-python3 -m http.server
+python3 -m http.server 8765
 ```
 
-## Puzzles
+## Data
 
-Each clue accepts its hand-picked answers (`tools/groups.mjs`) plus every
-synonym found automatically in three sources: Moby Thesaurus II, WordNet
-and the Datamuse API (`tools/expanded.json`, about 200 words per clue).
-Words in `tools/blocklist.mjs` are removed.
+`js/words.js` and `tools/common.txt` come from `tools/words.py`, which
+combines the [an-array-of-english-words](https://www.npmjs.com/package/an-array-of-english-words)
+dictionary with [wordfreq](https://pypi.org/project/wordfreq/)
+frequencies:
 
-To refresh the synonym lists (needs `pip install nltk wordfreq` and the
-WordNet corpus; downloads Moby on first run):
+- the game accepts about 78,000 words (anything reasonably known)
+- par and hints only use about 16,000 familiar words that WordNet knows
 
 ```sh
-python3 tools/expand.py
+pip install wordfreq nltk
+python tools/words.py path/to/an-array-of-english-words/index.json
 ```
 
-To rebuild `js/puzzles.js`:
+`js/boards.js` comes from `tools/generate.mjs`. It deals random grids
+with English letter weights, finds every familiar word on each one, and
+runs a beam search for the shortest set of words that burns every tile.
+Boards with par from 5 to 7 are kept.
 
 ```sh
-node tools/generate.mjs 120
+node tools/generate.mjs 365
 ```
 
-The generator builds each puzzle from the hand-picked answers. It
-favors sets where the obvious answers mostly fit (usually one clue's
-first guess gets in the way), with several working combinations and
-familiar words. Players can use any accepted synonym on top of that. Puzzle 1 is
-October 30, 2026, and the list wraps after the last puzzle.
+Board 1 is October 31, 2026, and the list wraps after the last board.
+
+The earlier game, Burn, is kept at the `burn-v1` tag.

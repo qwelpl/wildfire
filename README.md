@@ -14,12 +14,13 @@ python3 -m http.server
 
 ## Puzzles
 
-Each clue accepts its hand-picked answers (`tools/groups.mjs`) plus
-synonyms pulled from WordNet and Datamuse (`tools/expanded.json`).
-Wrong-sense matches are removed in `tools/blocklist.mjs`.
+Each clue accepts its hand-picked answers (`tools/groups.mjs`) plus every
+synonym found automatically in three sources: Moby Thesaurus II, WordNet
+and the Datamuse API (`tools/expanded.json`, about 200 words per clue).
+Words in `tools/blocklist.mjs` are removed.
 
 To refresh the synonym lists (needs `pip install nltk wordfreq` and the
-WordNet corpus):
+WordNet corpus; downloads Moby on first run):
 
 ```sh
 python3 tools/expand.py
@@ -31,7 +32,8 @@ To rebuild `js/puzzles.js`:
 node tools/generate.mjs 120
 ```
 
-The generator keeps only sets of clues with exactly one solution across
-every accepted word, where the solution uses hand-picked answers and at
-least two clues have their most obvious answer as a trap. Puzzle 1 is
+The generator builds each puzzle from the hand-picked answers: exactly
+one combination of them shares no letters, and at least two clues have
+their most obvious answer as a trap. Players can use any accepted
+synonym, so other routes through a puzzle may exist. Puzzle 1 is
 October 30, 2026, and the list wraps after the last puzzle.

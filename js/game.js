@@ -39,7 +39,8 @@
 
   function load(i) {
     index = i;
-    puzzle = DATA.puzzles[i % DATA.puzzles.length];
+    const p = DATA.puzzles[i % DATA.puzzles.length];
+    puzzle = { clues: p.clues.map((c) => ({ clue: c, answers: DATA.words[c] })), solution: p.solution };
     const saved = KEEP_PROGRESS ? store.get(`burn:${i}`, null) : null;
     state = saved && Array.isArray(saved.locked) && saved.locked.length === puzzle.clues.length
       ? saved
@@ -354,7 +355,7 @@
   function showDone() {
     $('done-title').textContent = state.revealed ? 'The answer' : state.undos === 0 ? 'Burned clean' : 'Solved';
     $('done-line').textContent = state.revealed
-      ? 'Only this set of words shares no letters.'
+      ? 'One set of words that shares no letters.'
       : state.undos === 0 ? 'No undos. Nicely done.' : `Solved with ${state.undos === 1 ? '1 undo' : state.undos + ' undos'}.`;
 
     $('done-words').replaceChildren(...puzzle.clues.map((c, i) => {

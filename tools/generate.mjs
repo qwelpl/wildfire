@@ -29,7 +29,7 @@ function mulberry32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-const rand = mulberry32(20261030);
+const rand = mulberry32(20261031);
 
 const mask = (word) => {
   let m = 0;

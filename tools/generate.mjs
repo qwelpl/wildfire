@@ -4,14 +4,16 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { GROUPS, CLASHES } from './groups.mjs';
 import { BLOCK } from './blocklist.mjs';
+import { ALLOW } from './allowlist.mjs';
 
 // Every word a clue accepts: the hand-picked answers plus the thesaurus
-// expansion from expand.py, minus wrong-sense words. Solutions only ever
+// expansion from expand.py and allowlist.mjs, minus wrong-sense words. Solutions only ever
 // use hand-picked answers, but uniqueness is checked against all of them.
 const EXPANDED = JSON.parse(readFileSync(new URL('./expanded.json', import.meta.url)));
 const ACCEPTED = Object.fromEntries(Object.keys(GROUPS).map((n) => {
   const blocked = new Set((BLOCK[n] ?? '').split(' '));
-  const extra = (EXPANDED[n] ?? []).filter((w) => !blocked.has(w));
+  const extra = [...(EXPANDED[n] ?? []), ...(ALLOW[n] ? ALLOW[n].split(' ') : [])]
+    .filter((w) => !blocked.has(w));
   return [n, [...new Set([...GROUPS[n], ...extra])]];
 }));
 
